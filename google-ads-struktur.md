@@ -68,11 +68,12 @@ flowchart TD
     subgraph Shop["Webshop – naturlaboratoriet.dk (WordPress, ✅ bekræftet)"]
         W[Produktdata<br/>titel, pris, lager, billede]
         S[Website / sider]
-        CMP["Cookie-banner / CMP<br/>⚠️ plugin + Consent Mode status ukendt"]
+        CMP["Cookie-banner / CMP<br/>✅ Complianz + WP Consent API<br/>Consent Mode v2 virker"]
+        GFW["Google for WooCommerce<br/>✅ indsætter AW-472880718 direkte (gtag)<br/>+ consent default/update"]
     end
 
     subgraph Feed["Produktfeed"]
-        F[XML/CSV feed<br/>⚠️ kilde ikke bekræftet — plugin eller dette repo?]
+        F[Produktfeed<br/>✅ formentlig via Google for WooCommerce]
     end
 
     subgraph Google["Google"]
@@ -92,8 +93,9 @@ flowchart TD
     MC2 -. "linked?" .-> ADS
 
     S --> GTM
-    CMP -. "samtykke-status (Consent Mode v2)<br/>⚠️ status ukendt" .-> GTM
-    GTM -- "conversion tag" --> TAG
+    CMP -- "samtykke via WP Consent API" --> GFW
+    GFW -- "consent default/update + Ads-tag" --> TAG
+    CMP -- "cmplz_event_* til dataLayer" --> GTM
     TAG --> ADS
     GTM -- "events" --> GA4
     GA4 --> ADS
@@ -103,6 +105,69 @@ flowchart TD
 
 > **Signaturforklaring:** ✅ bekræftet via screenshots · ⚠️ ikke bekræftet
 > endnu · 🔒 lukket/inaktiv konto.
+
+## Samspil mellem plugins (WordPress)
+
+Fire plugins på sitet arbejder sammen om samtykke og sporing. De taler ikke
+direkte med hinanden. De mødes to steder: i **WP Consent API**, som er et fælles
+register over samtykke inde i WordPress, og i **dataLayer**, som er en fælles
+"postkasse" i den besøgendes browser, hvor alle scripts lægger beskeder til Google.
+
+```mermaid
+flowchart LR
+    V(["👤 Besøgende"])
+
+    subgraph WP["WordPress – naturlaboratoriet.dk"]
+        WOO["<b>WooCommerce</b><br/>produkter, kurv, ordrer"]
+        CMPLZ["<b>Complianz</b><br/>cookie-banner"]
+        WPCA["<b>WP Consent API</b><br/>fælles samtykke-register"]
+        GFW["<b>Google for WooCommerce</b><br/>Ads-tag + produktfeed"]
+        GTM4WP["<b>GTM4WP</b><br/>indsætter GTM-container"]
+    end
+
+    DL[("<b>dataLayer</b><br/>fælles postkasse<br/>i browseren")]
+
+    subgraph G["Google"]
+        GTMC["GTM-container<br/>GTM-NBTT238"]
+        GA4["Google Analytics 4<br/>G-N4QYM1SC3Q"]
+        ADS["Google Ads<br/>AW-472880718"]
+        MC["Merchant Center<br/>5755493074"]
+    end
+
+    V -- "Godkend / Afvis" --> CMPLZ
+    CMPLZ -- "1 · registrerer samtykke" --> WPCA
+    CMPLZ -- "cmplz_event_*" --> DL
+    WPCA -- "2 · læser samtykke" --> GFW
+    GFW -- "3 · consent default + update" --> DL
+
+    WOO -- "produktdata" --> GFW
+    GFW -- "produktfeed" --> MC
+    GFW -- "gtag: køb, remarketing<br/>(direkte, uden om GTM)" --> ADS
+
+    WOO -- "kurv/ordre-data" --> GTM4WP
+    GTM4WP -- "e-commerce events<br/>view_item_list, purchase …" --> DL
+    GTM4WP -- "indlæser" --> GTMC
+    DL --> GTMC
+    GTMC -- "GA4-tags<br/>(⚠️ fyring ikke testet)" --> GA4
+
+    MC -. "kontolink" .-> ADS
+    GA4 -. "kontolink" .-> ADS
+```
+
+**Hvem gør hvad**
+
+| Plugin | Opgave | Sender til Google |
+|---|---|---|
+| **WooCommerce** | Selve webshoppen: produkter, kurv, ordrer | Intet direkte. Leverer data til de to Google-plugins |
+| **Complianz** | Viser cookie-banneret og gemmer valget | Intet direkte. Melder samtykket til WP Consent API og lægger `cmplz_event_*` i dataLayer |
+| **WP Consent API** | Fælles samtykke-register, som andre plugins kan læse | Intet. Det er bindeleddet mellem Complianz og Google for WooCommerce |
+| **Google for WooCommerce** | Google Ads-tag, købskonvertering og produktfeed | Ads (`AW-472880718`) direkte via gtag, feed til Merchant Center, Consent Mode-signaler |
+| **GTM4WP** | Indsætter GTM-containeren og e-commerce-events | GA4 via GTM-containeren |
+
+**Tommelfingerregler**
+- **Google Ads håndteres af Google for WooCommerce.** Opret ikke Ads-konverterings-tags i GTM, for så tælles hvert køb to gange.
+- **GA4 håndteres af GTM** (via GTM4WP). Lad ikke Google for WooCommerce, Rank Math eller Site Kit også indsætte GA4.
+- **Consent Mode kræver alle tre led:** Complianz → WP Consent API → Google for WooCommerce. Deaktiveres WP Consent API, kommer der ingen `update`, og Google Ads ser alle som "afvist".
 
 ## Navigationsstier — hvor jeg fandt det
 
@@ -207,12 +272,19 @@ Her bygges kampagnerne:
    scriptblokering aktiveret, Google Fonts selv-hostes, ingen TCF-framework
    nødvendigt). Complianz fandt og aktiverede automatisk integration til
    **GTM4WP**.
-6. 🔶 **Verificér Consent Mode v2 reelt virker**
-   - ✅ Banneret vises korrekt live på sitet (Godkend/Afvis/Se præferencer +
-     link til Cookiepolitik) — bekræftet via screenshot
-   - ⬜ Stadig mangler: Tjek GTM4WP's **"Consent mode & consent tools"**-side
-     i wp-admin for at se om Consent Mode-signalerne rent faktisk er slået
-     til der
+6. ✅ **Consent Mode v2 virker** (testet 2026-10-22 i browserkonsollen)
+   - Complianz-guide: statistik = "Google Tag Manager affyrer dette script",
+     reklame-scripts = Ja, ingen TCF-framework
+   - `consent default` (alt `denied`, EU/EØS + GB/CH, `wait_for_update: 500`)
+     sendes af **Google for WooCommerce** — ikke af Complianz
+   - `consent update` (`granted`) manglede, indtil **WP Consent API** blev
+     installeret (manuelt via Simply.com-filhåndtering, da plugin-installation
+     fra wp-admin fejler). Nu: Complianz → WP Consent API → Google for
+     WooCommerce → `gtag('consent','update')`
+   - ⬜ Mangler: test **Afvis** (der må ikke komme `update` med `granted`)
+   - ⚠️ **Google Ads-tagget (`AW-472880718`) indsættes direkte af Google for
+     WooCommerce**, ikke via GTM → opret **ikke** Ads-konverterings-tag i GTM
+     (dobbelttælling)
 7. ⬜ **Bekræft at tags rent faktisk fyrer** — tjek triggers inde i
    GTM-containeren + brug Preview-mode, både med og uden samtykke givet.
 8. ⬜ **Gennemgå de 10 eksisterende kampagner** (alle sat på pause pt.) —
@@ -247,11 +319,12 @@ Her bygges kampagnerne:
 - [x] **GTM-installation:** ✅ sat op via pluginnet **"GTM4WP – A Google Tag
       Manager (GTM) plugin for WordPress"** (Thomas Geiger, v2.0.6), som
       lægger containeret `GTM-NBTT238` ind på sitet.
-- [ ] Genereres feed'en af en WooCommerce-plugin (fx "Product Feed Pro",
-      "WooCommerce Google Feed Manager" e.l.), eller af et separat
-      feed-værktøj (fx dette repo)? — *søges efter i wp-admin ("feed")*
-- [ ] Hvilken CMP/cookie-plugin bruges (for WooCommerce typisk Complianz,
-      CookieYes, Cookiebot, eller Borlabs)?
-- [ ] Er Consent Mode v2 allerede sat op i GTM, eller mangler det?
+- [x] Feed: formentlig **Google for WooCommerce** (`"groups": "GLA"` i
+      gtag-config) — bekræft i pluginnets indstillinger
+- [x] CMP: **Complianz** + **WP Consent API**
+- [x] Consent Mode v2: ✅ virker via Google for WooCommerce (se trin 6)
+- [ ] Plugin-installation fra wp-admin fejler generelt — wp-admin-filer har
+      blandede datoer (mulig halv WP-opdatering). Tjek med Simply.com
+- [ ] 37 plugin-opdateringer + 13 inaktive plugins — opdatér/ryd op (backup først)
 - [ ] Bruges Enhanced Conversions / server-side tagging?
 - [ ] Hvor mange Merchant Center/Google Ads-konti er der (fx ét per land/marked)?
