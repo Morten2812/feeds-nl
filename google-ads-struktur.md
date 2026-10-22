@@ -42,9 +42,9 @@ noget du "linker" på samme måde:
 >   Merchant Center-konti er koblet til denne Google Ads-konto. Bør
 >   undersøges hvorfor (fx en gammel/ubrugt konto ved siden af den aktive
 >   5755493074).
-> - **Google-tag:** findes ("Untitled tag" — ikke omdøbt), men det er endnu
->   ikke bekræftet om den fyrer via GTM eller er installeret direkte på
->   sitet. Tjekkes under "Administrer" på tagget.
+> - **Google-tag:** findes ("Untitled tag" — ikke omdøbt). ✅ Bekræftet
+>   (2026-10-22): installeres **direkte på sitet af Google for WooCommerce**
+>   via gtag, ikke via GTM.
 
 > **Opdateret, bekræftet via Google Tag Manager:**
 > - **GTM-container:** ✅ `GTM-NBTT238`, installeret på `www.naturlaboratoriet.dk`
@@ -63,48 +63,50 @@ noget du "linker" på samme måde:
 
 ## Overblik (diagram)
 
+Det store billede: hvilke spor data følger fra webshoppen til Google Ads.
+Hvordan pluginnerne arbejder sammen inde i WordPress, står i afsnittet
+[Samspil mellem plugins](#samspil-mellem-plugins-wordpress).
+
 ```mermaid
 flowchart TD
-    subgraph Shop["Webshop – naturlaboratoriet.dk (WordPress, ✅ bekræftet)"]
-        W[Produktdata<br/>titel, pris, lager, billede]
-        S[Website / sider]
-        CMP["Cookie-banner / CMP<br/>✅ Complianz + WP Consent API<br/>Consent Mode v2 virker"]
-        GFW["Google for WooCommerce<br/>✅ indsætter AW-472880718 direkte (gtag)<br/>+ consent default/update"]
-    end
-
-    subgraph Feed["Produktfeed"]
-        F[Produktfeed<br/>✅ formentlig via Google for WooCommerce]
+    subgraph Shop["Webshop – naturlaboratoriet.dk (WordPress + WooCommerce)"]
+        W["Produktdata<br/>titel, pris, lager, billede"]
+        CMP["Complianz + WP Consent API<br/>✅ cookie-banner, Consent Mode v2 virker"]
+        GFW["Google for WooCommerce<br/>✅ Ads-tag AW-472880718 + feed"]
+        GTM4WP["GTM4WP<br/>✅ indsætter GTM-container"]
     end
 
     subgraph Google["Google"]
-        MC["Google Merchant Center<br/>✅ 5755493074 'Naturlaboratoriet'<br/>~900 produkter, 12 kræver handling"]
-        MC2["Merchant Center #2<br/>⚠️ 5755394053, duplikat via Business Manager<br/>formentlig tom — overvejes lukket"]
-        GTM["Google Tag Manager<br/>✅ GTM-NBTT238 (via plugin GTM4WP)<br/>⚠️ triggere/fyring ikke bekræftet"]
-        GA4["Google Analytics 4<br/>✅ linket, G-N4QYM1SC3Q<br/>+ GT-55B3V2VK"]
-        TAG["Google-tag ('Untitled tag')<br/>✅ AW-472880718"]
-        ADS["Google Ads 742-775-1648<br/>✅ aktiv"]
+        MC["Merchant Center 5755493074<br/>✅ 834 produkter, 832 godkendt"]
+        MC2["Merchant Center #2 5755394053<br/>⚠️ duplikat, formentlig tom"]
+        GTM["GTM-container GTM-NBTT238<br/>⚠️ GA4-fyring ikke testet"]
+        GA4["Google Analytics 4<br/>G-N4QYM1SC3Q"]
+        ADS["Google Ads 742-775-1648<br/>✅ aktiv, 10 kampagner på pause"]
         ADSOLD["Google Ads 368-030-3695<br/>🔒 lukket"]
     end
 
-    W --> F
-    F --> MC
-    F -.-> MC2
-    MC -- "linked account" --> ADS
-    MC2 -. "linked?" .-> ADS
+    W --> GFW
+    CMP -- "samtykke" --> GFW
+    CMP -- "samtykke" --> GTM4WP
 
-    S --> GTM
-    CMP -- "samtykke via WP Consent API" --> GFW
-    GFW -- "consent default/update + Ads-tag" --> TAG
-    CMP -- "cmplz_event_* til dataLayer" --> GTM
-    TAG --> ADS
-    GTM -- "events" --> GA4
-    GA4 --> ADS
+    GFW -- "① produktfeed" --> MC
+    GFW -- "② køb + remarketing (gtag)" --> ADS
+    GTM4WP --> GTM
+    GTM -- "③ adfærd + e-commerce" --> GA4
 
-    ADSOLD -. "historik/konverteringer overført?" .-> ADS
+    MC -- "kontolink" --> ADS
+    GA4 -- "kontolink" --> ADS
+    MC2 -. "linket, bør fjernes" .-> ADS
+    ADSOLD -. "historik?" .-> ADS
 ```
 
-> **Signaturforklaring:** ✅ bekræftet via screenshots · ⚠️ ikke bekræftet
-> endnu · 🔒 lukket/inaktiv konto.
+**De tre spor:**
+1. **Produktfeed:** Google for WooCommerce → Merchant Center → Google Ads (Shopping/PMax)
+2. **Konverteringer:** Google for WooCommerce → Google Ads, direkte via gtag
+3. **Analyse:** GTM4WP → GTM-container → GA4 → Google Ads
+
+> **Signaturforklaring:** ✅ bekræftet · ⚠️ ikke bekræftet endnu ·
+> 🔒 lukket/inaktiv konto.
 
 ## Samspil mellem plugins (WordPress)
 
@@ -281,7 +283,7 @@ Her bygges kampagnerne:
      installeret (manuelt via Simply.com-filhåndtering, da plugin-installation
      fra wp-admin fejler). Nu: Complianz → WP Consent API → Google for
      WooCommerce → `gtag('consent','update')`
-   - ⬜ Mangler: test **Afvis** (der må ikke komme `update` med `granted`)
+   - ✅ **Afvis** testet: `update` med alt `denied` (korrekt)
    - ⚠️ **Google Ads-tagget (`AW-472880718`) indsættes direkte af Google for
      WooCommerce**, ikke via GTM → opret **ikke** Ads-konverterings-tag i GTM
      (dobbelttælling)
@@ -319,8 +321,15 @@ Her bygges kampagnerne:
 - [x] **GTM-installation:** ✅ sat op via pluginnet **"GTM4WP – A Google Tag
       Manager (GTM) plugin for WordPress"** (Thomas Geiger, v2.0.6), som
       lægger containeret `GTM-NBTT238` ind på sitet.
-- [x] Feed: formentlig **Google for WooCommerce** (`"groups": "GLA"` i
-      gtag-config) — bekræft i pluginnets indstillinger
+- [x] Feed: ✅ **Google for WooCommerce**, bekræftet i pluginnets Settings
+      (Merchant Center 5755493074 + Google Ads 742-775-1648 forbundet via
+      info@naturlaboratoriet.dk og Jetpack). 236 klik på gratis
+      produktvisninger i okt. 2026
+- [ ] Google for WooCommerce-dashboard viser fejl *"Unexpected token '<' …
+      is not valid JSON"*: REST API-kald returnerer HTML. Formentlig samme
+      serverproblem som plugin-installationen. Tjek Værktøjer → Webstedstilstand
+- [ ] Google Ads: **erklæring om EU-politiske annoncer** mangler på kampagner.
+      Skal udfyldes ("indeholder ikke politiske annoncer") før genaktivering
 - [x] CMP: **Complianz** + **WP Consent API**
 - [x] Consent Mode v2: ✅ virker via Google for WooCommerce (se trin 6)
 - [ ] Plugin-installation fra wp-admin fejler generelt — wp-admin-filer har
